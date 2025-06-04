@@ -1,73 +1,57 @@
 import streamlit as st
+import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-from geopy.distance import geodesic
-import math
-import random
-import numpy as np
 from io import BytesIO
-from PIL import Image
+import base64
 
-st.set_page_config(page_title="Animatie Derivă SAR", layout="wide")
+st.set_page_config(page_title="Animație Derivă SAR", layout="wide")
+
 st.title("🌊 Animație Derivă SAR cu Particule Multiple")
 
-# Inputuri
-lat = st.sidebar.number_input("Latitudine inițială", value=44.17, format="%.5f")
-lon = st.sidebar.number_input("Longitudine inițială", value=28.65, format="%.5f")
-duration = st.sidebar.slider("Durata (ore)", 1, 24, 12)
-particles = st.sidebar.slider("Număr particule", 10, 300, 100)
-alpha = st.sidebar.slider("Coeficient derivă vânt (%)", 0.0, 10.0, 3.0) / 100.0
+st.sidebar.header("Parametri simulare")
+num_particles = st.sidebar.slider("Număr particule", 10, 300, 100)
+durata_ore = st.sidebar.slider("Durata simulării (ore)", 1, 48, 12)
+viteza = st.sidebar.slider("Viteza derivă (km/h)", 0.5, 5.0, 1.5, step=0.1)
+directie = st.sidebar.slider("Direcție derivă (grade - 0=N, 90=E)", 0, 360, 135)
 
-# Simulare simplificată
-v_curent = 0.1
-bearing_curent = 45
-wind_speed = 5
-wind_direction = 90
+btn = st.button("🎬 Generează animația")
 
-if st.button("🎬 Generează animația"):
+if btn:
+    st.info("Se generează animația...")
 
-    paths = [[(lat, lon)] for _ in range(particles)]
+    lat_start, lon_start = 44.15, 28.65
+    directie_rad = np.deg2rad(directie)
 
-    for hour in range(duration):
-        for p in paths:
-            lat_i, lon_i = p[-1]
-            dir_rad = math.radians(wind_direction + random.uniform(-5, 5))
+    positions = np.zeros((num_particles, durata_ore + 1, 2))
+    positions[:, 0, 0] = lat_start
+    positions[:, 0, 1] = lon_start
 
-            v_wind_x = wind_speed * math.sin(dir_rad)
-            v_wind_y = wind_speed * math.cos(dir_rad)
+    for t in range(1, durata_ore + 1):
+        delta_lat = (viteza / 111) * np.cos(directie_rad)
+        delta_lon = (viteza / (111 * np.cos(np.deg2rad(lat_start)))) * np.sin(directie_rad)
 
-            v_total_x = (v_curent * math.sin(math.radians(bearing_curent))) + (alpha * v_wind_x)
-            v_total_y = (v_curent * math.cos(math.radians(bearing_curent))) + (alpha * v_wind_y)
+        zgomot = np.random.normal(0, 0.002, (num_particles, 2))
+        positions[:, t, 0] = positions[:, t - 1, 0] + delta_lat + zgomot[:, 0]
+        positions[:, t, 1] = positions[:, t - 1, 1] + delta_lon + zgomot[:, 1]
 
-            dx = v_total_x * 3600
-            dy = v_total_y * 3600
-            dist_m = math.sqrt(dx**2 + dy**2)
-            bearing = math.degrees(math.atan2(dx, dy))
+    fig, ax = plt.subplots()
+    scat = ax.scatter([], [], s=10)
+    ax.set_xlim(np.min(positions[:, :, 1]) - 0.01, np.max(positions[:, :, 1]) + 0.01)
+    ax.set_ylim(np.min(positions[:, :, 0]) - 0.01, np.max(positions[:, :, 0]) + 0.01)
+    ax.set_xlabel("Longitudine")
+    ax.set_ylabel("Latitudine")
 
-            new_point = geodesic(meters=dist_m).destination(point=(lat_i, lon_i), bearing=bearing)
-            p.append((new_point.latitude, new_point.longitude))
-
-    fig, ax = plt.subplots(figsize=(6, 8))
-    ax.set_xlim(lon - 0.5, lon + 0.5)
-    ax.set_ylim(lat - 0.5, lat + 0.5)
-    ax.set_title("Derivă SAR – Simulare cu Particule")
-    scat = ax.scatter([], [], s=10, color='blue')
-
-    def init():
-        scat.set_offsets(np.empty((0, 2)))
+    def update(frame):
+        scat.set_offsets(positions[:, frame, ::-1])
         return scat,
 
-    def animate(i):
-        frame = [p[i] if i < len(p) else p[-1] for p in paths]
-        scat.set_offsets(np.array(frame))
-        return scat,
-
-    ani = animation.FuncAnimation(fig, animate, init_func=init, frames=duration+1, interval=500, blit=True)
+    ani = animation.FuncAnimation(fig, update, frames=durata_ore + 1, interval=500, blit=True)
 
     gif_io = BytesIO()
-   ani.save(gif_io, writer=animation.PillowWriter(fps=2))
-
+    ani.save(gif_io, writer=animation.PillowWriter(fps=2))
     gif_io.seek(0)
+    gif_data = base64.b64encode(gif_io.read()).decode("utf-8")
 
-    st.image(Image.open(gif_io), caption="Animație deriva particule", use_column_width=True)
-    st.download_button("📥 Descarcă animația GIF", gif_io, file_name="deriva_animatie.gif", mime="image/gif")
+    st.markdown("### Rezultat:")
+    st.image(f"data:image/gif;base64,{gif_data}")
