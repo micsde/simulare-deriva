@@ -65,7 +65,8 @@ if st.button("🎬 Generează animația"):
     ani = animation.FuncAnimation(fig, animate, init_func=init, frames=duration+1, interval=500, blit=True)
 
     gif_io = BytesIO()
-    ani.save(gif_io, writer='pillow', format='gif')
+   ani.save(gif_io, writer=animation.PillowWriter(fps=2))
+
     gif_io.seek(0)
 
     st.image(Image.open(gif_io), caption="Animație deriva particule", use_column_width=True)
