@@ -1,48 +1,66 @@
-
 import streamlit as st
-import folium
-import math
-from streamlit_folium import folium_static
 import requests
-from datetime import datetime
-import random
+import folium
+from streamlit_folium import folium_static
+from geopy.distance import geodesic
+import math
+from datetime import datetime, timedelta
 
-st.set_page_config(page_title="Simulare Derivă SAR", layout="wide")
+st.set_page_config(page_title="Derivă realistă SAR", layout="wide")
+st.title("🌊 Simulare Derivă Maritimă (Realistă) – Marea Neagră")
 
-st.title("🌊 Simulare Derivă Maritimă (SAR) – România / Marea Neagră")
-
-st.markdown("Această aplicație simplificată estimează deriva unui obiect în derivă pe mare pe baza direcției vântului și a poziției inițiale. Datele reale pot fi extinse.")
-
-# Poziție de start
-lat = st.number_input("Latitudine inițială", value=44.15, format="%.6f")
-lon = st.number_input("Longitudine inițială", value=28.65, format="%.6f")
-
-# Direcție vânt (simplificat)
-wind_speed = st.slider("Viteză vânt (m/s)", 0.0, 20.0, 5.0)
-wind_direction = st.slider("Direcție vânt (grade – 0=N, 90=E)", 0, 360, 90)
-
+# Input de la utilizator
+lat = st.number_input("Latitudine inițială", value=44.17, format="%.5f")
+lon = st.number_input("Longitudine inițială", value=28.65, format="%.5f")
 duration_hours = st.slider("Durată simulare (ore)", 1, 24, 6)
-
-# Coeficient leeway (proporția din vânt preluată de obiect)
 alpha = st.slider("Coeficient de derivă α (%)", 0.0, 10.0, 3.0) / 100.0
+v_curent = 0.1  # m/s simplificat
+bearing_curent = 45  # N-E
 
-# Calcule simple (ignorând curenți și valuri pentru acest demo)
-distance_km = wind_speed * alpha * 3.6 * duration_hours
-direction_rad = wind_direction * 3.14159 / 180
+# Obține date reale de vânt pe ore
+def get_wind_hourly(lat, lon, hours):
+    url = (
+        f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
+        f"&hourly=windspeed_10m,winddirection_10m&forecast_days=1&timezone=auto"
+    )
+    r = requests.get(url)
+    data = r.json()
+    speeds = data['hourly']['windspeed_10m'][:hours]
+    directions = data['hourly']['winddirection_10m'][:hours]
+    return list(zip(speeds, directions))
 
-# Conversie simplificată lat/lon (funcționează pentru distanțe mici)
-delta_lat = (distance_km / 111) * math.cos(direction_rad)
-delta_lon = (distance_km / (111 * math.cos(lat * 3.14159 / 180))) * math.sin(direction_rad)
+# Simulare derivă pas cu pas
+positions = [(lat, lon)]
+wind_data = get_wind_hourly(lat, lon, duration_hours)
 
-final_lat = lat + delta_lat
-final_lon = lon + delta_lon
+for hour in range(duration_hours):
+    wind_speed, wind_dir = wind_data[hour]
+    angle_rad = math.radians(wind_dir)
+    v_wind_x = wind_speed * math.sin(angle_rad)
+    v_wind_y = wind_speed * math.cos(angle_rad)
 
-m = folium.Map(location=[lat, lon], zoom_start=7)
-folium.Marker([lat, lon], tooltip="Poziție Inițială", icon=folium.Icon(color="blue")).add_to(m)
-folium.Marker([final_lat, final_lon], tooltip="Poziție Estimată", icon=folium.Icon(color="red")).add_to(m)
-folium.PolyLine(locations=[[lat, lon], [final_lat, final_lon]], color="green").add_to(m)
+    # Derivă totală
+    v_total_x = v_curent * math.sin(math.radians(bearing_curent)) + alpha * v_wind_x
+    v_total_y = v_curent * math.cos(math.radians(bearing_curent)) + alpha * v_wind_y
 
-st.markdown(f"**Distanță estimată derivă:** `{distance_km:.2f}` km")
+    # Timp: 1 oră = 3600s, distanță = v * t
+    dx = v_total_x * 3600
+    dy = v_total_y * 3600
+    dist_m = math.sqrt(dx**2 + dy**2)
+    bearing = math.degrees(math.atan2(dx, dy))
+
+    # Noua poziție
+    last_point = positions[-1]
+    new_point = geodesic(meters=dist_m).destination(point=last_point, bearing=bearing)
+    positions.append((new_point.latitude, new_point.longitude))
+
+# Hartă
+m = folium.Map(location=positions[0], zoom_start=8)
+folium.Marker(positions[0], tooltip="Start", icon=folium.Icon(color="blue")).add_to(m)
+folium.Marker(positions[-1], tooltip="Final", icon=folium.Icon(color="red")).add_to(m)
+folium.PolyLine(positions, color="green", weight=2.5, tooltip="Traiectorie derivă").add_to(m)
+
+st.markdown(f"**Poziție finală estimată:** {positions[-1][0]:.4f}, {positions[-1][1]:.4f}")
 folium_static(m)
 
-st.caption("Simulare simplificată – fără date reale de curent sau valuri. Versiune demonstrativă.")
+st.caption("Simulare realistă cu deriva orară calculată din date meteo. Fără integrare curenți reali (demo).")
